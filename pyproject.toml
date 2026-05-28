@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "limitless-dep-map"
+version = "0.1.0"
+description = "Mirror-Mark stamped SVG dependency-graph renderer for the Limitless monorepo."
+requires-python = ">=3.11"
+authors = [{name = "David Carson", email = "david@vocala.co"}]
+readme = "README.md"
+license = {text = "Apache-2.0"}
+
+# R145 stdlib-only firewall — zero runtime deps. Cohort canonical: the
+# dep-map binary itself must be byte-reproducible from a clean Python
+# 3.11+ install with no pip step, mirroring lore-mark-verify's
+# regulator-grade "no Limitless source trust required" property.
+dependencies = []
+
+[project.scripts]
+dep-map = "dep_map.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/davly/limitless-dep-map"
+
+[tool.setuptools.packages.find]
+include = ["dep_map*"]
+exclude = ["tests*", "snapshots*"]
