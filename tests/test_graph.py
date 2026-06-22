@@ -155,5 +155,74 @@ class TestIteration(unittest.TestCase):
         self.assertEqual(len(g), 3)
 
 
+class TestTransitiveReachability(unittest.TestCase):
+    def setUp(self) -> None:
+        # casino -> reality ; ledger -> casino ; report -> ledger
+        # so reality's transitive consumers = {casino, ledger, report}
+        self.g = Graph.from_edges([
+            _e("casino", "reality"),
+            _e("ledger", "casino"),
+            _e("report", "ledger"),
+            _e("folio", "limitless-rs", "rust"),
+        ])
+
+    def test_transitive_consumers_blast_radius(self) -> None:
+        self.assertEqual(
+            self.g.transitive_consumers("reality"),
+            {"casino", "ledger", "report"},
+        )
+
+    def test_transitive_consumers_excludes_self(self) -> None:
+        self.assertNotIn("reality", self.g.transitive_consumers("reality"))
+
+    def test_transitive_consumers_leaf(self) -> None:
+        self.assertEqual(self.g.transitive_consumers("report"), set())
+
+    def test_transitive_consumers_unknown(self) -> None:
+        self.assertEqual(self.g.transitive_consumers("ghost"), set())
+
+    def test_transitive_producers_full_upstream(self) -> None:
+        self.assertEqual(
+            self.g.transitive_producers("report"),
+            {"ledger", "casino", "reality"},
+        )
+
+    def test_transitive_producers_excludes_self(self) -> None:
+        self.assertNotIn("report", self.g.transitive_producers("report"))
+
+
+class TestTopologicalOrderAndCycle(unittest.TestCase):
+    def test_acyclic_orders_producers_first(self) -> None:
+        g = Graph.from_edges([
+            _e("casino", "reality"),
+            _e("ledger", "casino"),
+        ])
+        order = g.topological_order()
+        # producer must precede the consumer that depends on it
+        self.assertLess(order.index("reality"), order.index("casino"))
+        self.assertLess(order.index("casino"), order.index("ledger"))
+        self.assertFalse(g.has_cycle())
+
+    def test_deterministic_tie_break(self) -> None:
+        g = Graph.from_edges([_e("b", "hub"), _e("a", "hub")])
+        # 'hub' first (in-degree 0), then a, b sorted.
+        self.assertEqual(g.topological_order(), ["hub", "a", "b"])
+
+    def test_cycle_detected(self) -> None:
+        g = Graph.from_edges([
+            _e("a", "b"),
+            _e("b", "c"),
+            _e("c", "a"),
+        ])
+        self.assertTrue(g.has_cycle())
+        with self.assertRaises(ValueError):
+            g.topological_order()
+
+    def test_empty_graph_ok(self) -> None:
+        g = Graph()
+        self.assertEqual(g.topological_order(), [])
+        self.assertFalse(g.has_cycle())
+
+
 if __name__ == "__main__":
     unittest.main()

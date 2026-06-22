@@ -175,6 +175,90 @@ class Graph:
         """
         return {node: len(self.incoming.get(node, set())) for node in HUB_NAMES if node in self.all_nodes()}
 
+    def transitive_consumers(self, producer: str) -> set[str]:
+        """All nodes that consume ``producer`` directly OR transitively.
+
+        Reverse-edge BFS over ``incoming``. This is the **blast radius**
+        of a change to ``producer`` — every node a cohort migration of
+        ``producer`` would ripple into. Excludes ``producer`` itself.
+        Returns ``set()`` for an unknown node.
+        """
+        if producer not in self.all_nodes():
+            return set()
+        seen: set[str] = set()
+        stack = [producer]
+        while stack:
+            cur = stack.pop()
+            for consumer in self.incoming.get(cur, set()):
+                if consumer not in seen:
+                    seen.add(consumer)
+                    stack.append(consumer)
+        return seen
+
+    def transitive_producers(self, consumer: str) -> set[str]:
+        """All nodes ``consumer`` depends on directly OR transitively.
+
+        Forward-edge BFS over ``out``. The full upstream closure of
+        ``consumer``. Excludes ``consumer`` itself. ``set()`` if unknown.
+        """
+        if consumer not in self.all_nodes():
+            return set()
+        seen: set[str] = set()
+        stack = [consumer]
+        while stack:
+            cur = stack.pop()
+            for producer in self.out.get(cur, set()):
+                if producer not in seen:
+                    seen.add(producer)
+                    stack.append(producer)
+        return seen
+
+    def topological_order(self) -> list[str]:
+        """Producers-first ordering via Kahn's algorithm.
+
+        Deterministic: ties broken by sorted node name (R145.C audit
+        snapshots must be byte-reproducible). Raises :class:`ValueError`
+        if the declared-edge graph contains a cycle.
+
+        Edge semantics: ``consumer -> producer`` means consumer depends
+        on producer, so producers (in-degree 0 in the *depends-on*
+        sense) come first.
+        """
+        nodes = self.all_nodes()
+        # in-degree = number of producers each consumer depends on.
+        indeg = {n: 0 for n in nodes}
+        for consumer in nodes:
+            indeg[consumer] = len(self.out.get(consumer, set()) & nodes)
+        ready = sorted([n for n, d in indeg.items() if d == 0])
+        out_order: list[str] = []
+        while ready:
+            cur = ready.pop(0)
+            out_order.append(cur)
+            newly: list[str] = []
+            for consumer in sorted(self.incoming.get(cur, set())):
+                if consumer in indeg:
+                    indeg[consumer] -= 1
+                    if indeg[consumer] == 0:
+                        newly.append(consumer)
+            ready = sorted(ready + newly)
+        if len(out_order) != len(nodes):
+            raise ValueError(
+                f"cycle detected: {len(out_order)} of {len(nodes)} nodes ordered"
+            )
+        return out_order
+
+    def has_cycle(self) -> bool:
+        """True if the declared-edge graph contains an import cycle.
+
+        A cross-substrate declared-dependency cycle is an R145.C smell
+        the dep-map audit should surface.
+        """
+        try:
+            self.topological_order()
+        except ValueError:
+            return True
+        return False
+
     # ------------------------------------------------------------------
     # Filter sub-views (used by CLI snapshot modes).
     # ------------------------------------------------------------------
