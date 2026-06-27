@@ -171,9 +171,31 @@ class Graph:
         """Map every hub node to its in-degree (number of consumers).
 
         Used by the renderer to order hubs by popularity — the most-
-        consumed hub gets the centre slot.
+        consumed hub gets the centre slot — and by the ``query
+        hub-degree`` CLI mode, which emits the result as part of a
+        byte-reproducible JSON answer.
+
+        The returned dict is ordered by **descending degree, then
+        ascending node name** so iteration is deterministic. The previous
+        implementation iterated ``HUB_NAMES`` (a ``frozenset``), whose
+        traversal order over strings is randomised per-process by
+        ``PYTHONHASHSEED`` — that made the key order non-reproducible and
+        ignored the documented "by popularity" ordering. We materialise
+        the degrees first, then sort, so the contract holds regardless of
+        hash seed.
         """
-        return {node: len(self.incoming.get(node, set())) for node in HUB_NAMES if node in self.all_nodes()}
+        nodes = self.all_nodes()
+        degrees = {
+            node: len(self.incoming.get(node, set()))
+            for node in HUB_NAMES
+            if node in nodes
+        }
+        return {
+            node: degree
+            for node, degree in sorted(
+                degrees.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+        }
 
     def transitive_consumers(self, producer: str) -> set[str]:
         """All nodes that consume ``producer`` directly OR transitively.
