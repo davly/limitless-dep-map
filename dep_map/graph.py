@@ -282,6 +282,98 @@ class Graph:
         return False
 
     # ------------------------------------------------------------------
+    # Full-graph export (dm-BU1).
+    #
+    # The query sub-command historically answered one *scalar/list* DAG
+    # question at a time (blast-radius, topo, ...). The whole graph —
+    # every edge with its substrate kind, every node with its layer — was
+    # never machine-readable; an operator had to render the SVG and read
+    # it by eye. These exporters surface the entire DAG as
+    # deterministically-ordered, JSON-serialisable plain data so CI and
+    # scripts can diff the dependency graph byte-for-byte. Every list is
+    # explicitly sorted and every dict key is stable, so two runs over an
+    # identical filesystem produce byte-identical JSON regardless of
+    # ``PYTHONHASHSEED``.
+    # ------------------------------------------------------------------
+
+    def export_edges(self) -> list[dict[str, str]]:
+        """Every declared edge as ``{consumer, kind, producer}``, sorted.
+
+        One object per ``(consumer, producer, kind)`` triple — the same
+        granularity as :attr:`edges` (the source of truth), so
+        ``len(export_edges()) == edge_count()``. A consumer/producer pair
+        declared in two substrates (e.g. a Go and a Rust edge) appears as
+        two objects with distinct ``kind`` values, surfacing the edge
+        substrate that was previously visible only inside the SVG. Sorted
+        by ``(consumer, producer, kind)`` for byte-reproducibility.
+        """
+        return [
+            {"consumer": e.consumer, "kind": e.kind, "producer": e.producer}
+            for e in sorted(
+                self.edges, key=lambda e: (e.consumer, e.producer, e.kind)
+            )
+        ]
+
+    def export_nodes(self) -> list[dict[str, str]]:
+        """Every node as ``{kind, name}``, sorted by name.
+
+        ``kind`` is the node's layer (:class:`NodeKind` value:
+        ``flagship`` / ``infrastructure`` / ``engine`` / ``foundation`` /
+        ``sdk`` / ``hub`` / ``unknown``) — the layer/substrate
+        classification that previously only drove SVG colour and was
+        never emitted as data. Nodes with no recorded classification
+        report ``unknown``. Sorted by name for byte-reproducibility.
+        """
+        return [
+            {
+                "kind": self.node_kinds.get(n, NodeKind.UNKNOWN).value,
+                "name": n,
+            }
+            for n in sorted(self.all_nodes())
+        ]
+
+    def export_graph(self) -> dict[str, list[dict[str, str]]]:
+        """The whole DAG as ``{"edges": [...], "nodes": [...]}``.
+
+        A superset of :meth:`export_edges` + :meth:`export_nodes` — the
+        single payload a consumer needs to reconstruct the graph. Both
+        sub-lists are deterministically sorted.
+        """
+        return {"edges": self.export_edges(), "nodes": self.export_nodes()}
+
+    def export_stats(self) -> dict[str, object]:
+        """Deterministic summary counts for the whole graph.
+
+        Fields:
+
+        * ``edge_count`` — number of declared ``(consumer, producer,
+          kind)`` triples (== ``len(export_edges())``).
+        * ``edge_kinds`` — histogram of edges by substrate kind.
+        * ``has_cycle`` — whether the declared-edge graph has a cycle.
+        * ``node_count`` — number of distinct nodes.
+        * ``node_kinds`` — histogram of nodes by :class:`NodeKind` layer.
+
+        The two histograms are plain dicts; ``json.dumps(sort_keys=True)``
+        renders their keys in sorted order, so the emitted JSON is
+        byte-reproducible. ``edge_kinds`` sums to ``edge_count`` and
+        ``node_kinds`` sums to ``node_count``.
+        """
+        edge_kinds: dict[str, int] = {}
+        for e in self.edges:
+            edge_kinds[e.kind] = edge_kinds.get(e.kind, 0) + 1
+        node_kinds: dict[str, int] = {}
+        for n in self.all_nodes():
+            layer = self.node_kinds.get(n, NodeKind.UNKNOWN).value
+            node_kinds[layer] = node_kinds.get(layer, 0) + 1
+        return {
+            "edge_count": self.edge_count(),
+            "edge_kinds": edge_kinds,
+            "has_cycle": self.has_cycle(),
+            "node_count": self.node_count(),
+            "node_kinds": node_kinds,
+        }
+
+    # ------------------------------------------------------------------
     # Filter sub-views (used by CLI snapshot modes).
     # ------------------------------------------------------------------
 

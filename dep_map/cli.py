@@ -17,7 +17,13 @@ envelope on stdout (``{"known": ..., "node": ..., "query": ...,
 :class:`Graph` queries — previously library-only and unreachable from the
 CLI — for scripting and CI. Query kinds: ``blast-radius`` / ``upstream``
 / ``consumers`` / ``producers`` (node-scoped, need ``--node``);
-``has-cycle`` / ``topo`` / ``hub-degree`` (graph-scoped).
+``has-cycle`` / ``topo`` / ``hub-degree`` (graph-scoped); and the
+full-graph exporters ``graph`` / ``edges`` / ``nodes`` / ``stats``
+(graph-scoped) which emit the WHOLE DAG as deterministically-sorted
+JSON — ``edges`` carries every edge with its substrate ``kind``,
+``nodes`` every node with its layer classification, ``graph`` both, and
+``stats`` summary counts (edge/node totals, by-kind and by-layer
+histograms, ``has_cycle``).
 
 The ``known`` field is the honesty flag: for node-scoped queries it is
 ``true`` iff the requested ``--node`` actually exists in the graph and
@@ -63,14 +69,29 @@ from dep_map.scanner import NodeKind, Scanner
 _NODE_QUERIES: frozenset[str] = frozenset(
     {"blast-radius", "upstream", "consumers", "producers"}
 )
-_GRAPH_QUERIES: frozenset[str] = frozenset({"has-cycle", "topo", "hub-degree"})
+_GRAPH_QUERIES: frozenset[str] = frozenset(
+    {
+        "has-cycle",
+        "topo",
+        "hub-degree",
+        # dm-BU1 full-graph exporters (whole DAG as sorted JSON).
+        "edges",
+        "graph",
+        "nodes",
+        "stats",
+    }
+)
 QUERY_KINDS: tuple[str, ...] = (
     # Sorted so --help lists them deterministically.
     "blast-radius",
     "consumers",
+    "edges",
+    "graph",
     "has-cycle",
     "hub-degree",
+    "nodes",
     "producers",
+    "stats",
     "topo",
     "upstream",
 )
@@ -160,7 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Query to answer. Node-scoped (need --node): blast-radius "
             "(transitive consumers), upstream (transitive producers), "
             "consumers (direct), producers (direct). Graph-scoped (no "
-            "--node): has-cycle, topo, hub-degree."
+            "--node): has-cycle, topo, hub-degree, and the full-graph "
+            "exporters edges / nodes / graph / stats (whole DAG as "
+            "sorted JSON)."
         ),
     )
     query.add_argument(
@@ -206,6 +229,13 @@ def _query_result(graph: Graph, kind: str, node: str | None):
       :class:`ValueError` on a cyclic graph, propagated to the caller);
     * ``hub-degree`` -> ``list[[name, degree]]`` in descending-degree,
       ascending-name order (mirrors :meth:`Graph.hub_degree`).
+    * ``edges`` -> sorted ``list`` of ``{consumer, kind, producer}``
+      (the whole edge set, substrate kind surfaced).
+    * ``nodes`` -> sorted ``list`` of ``{kind, name}`` (every node with
+      its layer classification).
+    * ``graph`` -> ``{"edges": [...], "nodes": [...]}`` — the whole DAG.
+    * ``stats`` -> deterministic summary counts (see
+      :meth:`Graph.export_stats`).
     """
     if kind == "blast-radius":
         return sorted(graph.transitive_consumers(node))  # type: ignore[arg-type]
@@ -221,6 +251,14 @@ def _query_result(graph: Graph, kind: str, node: str | None):
         return graph.topological_order()
     if kind == "hub-degree":
         return [[name, degree] for name, degree in graph.hub_degree().items()]
+    if kind == "edges":
+        return graph.export_edges()
+    if kind == "nodes":
+        return graph.export_nodes()
+    if kind == "graph":
+        return graph.export_graph()
+    if kind == "stats":
+        return graph.export_stats()
     # Unreachable: argparse `choices` gates kind.
     raise ValueError(f"unknown query kind: {kind!r}")
 

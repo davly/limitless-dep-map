@@ -191,6 +191,90 @@ class TestTransitiveReachability(unittest.TestCase):
         self.assertNotIn("report", self.g.transitive_producers("report"))
 
 
+class TestFullGraphExport(unittest.TestCase):
+    """dm-BU1: export_edges / export_nodes / export_graph / export_stats.
+
+    Library-level proof of the deterministic, JSON-serialisable whole-DAG
+    export — independent of the CLI envelope.
+    """
+
+    def setUp(self) -> None:
+        self.g = Graph.from_edges([
+            _e("casino", "reality", "go"),
+            _e("foundry", "limitless-rs", "rust"),
+        ])
+        self.g.node_kinds = {
+            "casino": NodeKind.FLAGSHIP,
+            "foundry": NodeKind.FLAGSHIP,
+            "reality": NodeKind.FOUNDATION,
+            "limitless-rs": NodeKind.HUB,
+        }
+
+    def test_export_edges_sorted_schema(self) -> None:
+        self.assertEqual(
+            self.g.export_edges(),
+            [
+                {"consumer": "casino", "kind": "go", "producer": "reality"},
+                {"consumer": "foundry", "kind": "rust", "producer": "limitless-rs"},
+            ],
+        )
+
+    def test_export_edge_count_matches_edge_count(self) -> None:
+        self.assertEqual(len(self.g.export_edges()), self.g.edge_count())
+
+    def test_export_nodes_surfaces_layers(self) -> None:
+        self.assertEqual(
+            self.g.export_nodes(),
+            [
+                {"kind": "flagship", "name": "casino"},
+                {"kind": "flagship", "name": "foundry"},
+                {"kind": "hub", "name": "limitless-rs"},
+                {"kind": "foundation", "name": "reality"},
+            ],
+        )
+
+    def test_export_nodes_defaults_to_unknown_layer(self) -> None:
+        g = Graph.from_edges([_e("a", "b")])  # node_kinds never populated
+        self.assertEqual(
+            g.export_nodes(),
+            [
+                {"kind": "unknown", "name": "a"},
+                {"kind": "unknown", "name": "b"},
+            ],
+        )
+
+    def test_export_graph_combines_edges_and_nodes(self) -> None:
+        gg = self.g.export_graph()
+        self.assertEqual(set(gg), {"edges", "nodes"})
+        self.assertEqual(gg["edges"], self.g.export_edges())
+        self.assertEqual(gg["nodes"], self.g.export_nodes())
+
+    def test_export_stats(self) -> None:
+        self.assertEqual(
+            self.g.export_stats(),
+            {
+                "edge_count": 2,
+                "edge_kinds": {"go": 1, "rust": 1},
+                "has_cycle": False,
+                "node_count": 4,
+                "node_kinds": {"flagship": 2, "foundation": 1, "hub": 1},
+            },
+        )
+
+    def test_export_edges_groups_same_pair_distinct_kinds(self) -> None:
+        g = Graph.from_edges([
+            _e("poly", "limitless-rs", "go"),
+            _e("poly", "limitless-rs", "rust"),
+        ])
+        self.assertEqual(
+            g.export_edges(),
+            [
+                {"consumer": "poly", "kind": "go", "producer": "limitless-rs"},
+                {"consumer": "poly", "kind": "rust", "producer": "limitless-rs"},
+            ],
+        )
+
+
 class TestTopologicalOrderAndCycle(unittest.TestCase):
     def test_acyclic_orders_producers_first(self) -> None:
         g = Graph.from_edges([

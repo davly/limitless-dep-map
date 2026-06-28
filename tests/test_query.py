@@ -62,6 +62,40 @@ def _chain_root() -> Path:
     return root
 
 
+def _gomod_at(root: Path, layer: str, name: str, *requires: str) -> None:
+    """Write <layer>/<name>/go.mod requiring each github.com/davly/<req>."""
+    body = [f"module github.com/davly/{name}"]
+    for req in requires:
+        body.append(f"require github.com/davly/{req} v0.0.0")
+    path = root / layer / name / "go.mod"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+
+
+def _cargo(root: Path, name: str, *deps: str) -> None:
+    """Write flagships/<name>/Cargo.toml depending on each dep."""
+    body = [f'[package]\nname = "{name}"\n', "[dependencies]"]
+    for dep in deps:
+        body.append(f'{dep} = "0.1"')
+    path = root / "flagships" / name / "Cargo.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+
+
+def _export_root() -> Path:
+    """A small multi-substrate graph that exercises edge kinds + layers.
+
+    Edges: casino -> reality (go), foundry -> limitless-rs (rust).
+    Nodes: casino/foundry (flagship), reality (foundation), limitless-rs
+    (hub) — every export field is non-trivial and deterministic.
+    """
+    root = _mkroot()
+    _gomod_at(root, "foundation", "reality")  # on-disk dir => FOUNDATION layer
+    _gomod(root, "casino", "reality")
+    _cargo(root, "foundry", "limitless-rs")
+    return root
+
+
 class TestNodeScopedQueries(unittest.TestCase):
     def setUp(self) -> None:
         self.root = _chain_root()
@@ -254,6 +288,127 @@ class TestQueryDeterminismAndShape(unittest.TestCase):
         second = _run(["query", "--root", str(root), "hub-degree"])[1]
         self.assertEqual(first, second)
         self.assertTrue(first.strip())
+
+
+class TestFullGraphExport(unittest.TestCase):
+    """dm-BU1: graph / edges / nodes / stats emit the whole DAG as JSON.
+
+    Before this unit the query sub-command answered one scalar/list DAG
+    question at a time; the full graph — every edge with its substrate
+    kind, every node with its layer — was never machine-readable. These
+    tests pin the schema and the deterministic sorted ordering.
+    """
+
+    def _result(self, kind: str) -> object:
+        code, stdout, err = _run(
+            ["query", "--root", str(_export_root()), kind]
+        )
+        self.assertEqual(code, 0, msg=err)
+        env = json.loads(stdout)
+        self.assertEqual(env["query"], kind)
+        # Full-graph kinds are graph-scoped: no node, known is null.
+        self.assertIsNone(env["node"])
+        self.assertIsNone(env["known"])
+        return env["result"]
+
+    def test_edges_export_schema_and_sorted(self) -> None:
+        self.assertEqual(
+            self._result("edges"),
+            [
+                {"consumer": "casino", "kind": "go", "producer": "reality"},
+                {"consumer": "foundry", "kind": "rust", "producer": "limitless-rs"},
+            ],
+        )
+
+    def test_nodes_export_surfaces_layers_sorted(self) -> None:
+        self.assertEqual(
+            self._result("nodes"),
+            [
+                {"kind": "flagship", "name": "casino"},
+                {"kind": "flagship", "name": "foundry"},
+                {"kind": "hub", "name": "limitless-rs"},
+                {"kind": "foundation", "name": "reality"},
+            ],
+        )
+
+    def test_graph_export_combines_edges_and_nodes(self) -> None:
+        result = self._result("graph")
+        self.assertEqual(sorted(result.keys()), ["edges", "nodes"])
+        self.assertEqual(result["edges"], self._result("edges"))
+        self.assertEqual(result["nodes"], self._result("nodes"))
+
+    def test_stats_export_counts_and_histograms(self) -> None:
+        self.assertEqual(
+            self._result("stats"),
+            {
+                "edge_count": 2,
+                "edge_kinds": {"go": 1, "rust": 1},
+                "has_cycle": False,
+                "node_count": 4,
+                "node_kinds": {"flagship": 2, "foundation": 1, "hub": 1},
+            },
+        )
+
+    def test_stats_histograms_sum_to_totals(self) -> None:
+        stats = self._result("stats")
+        self.assertEqual(sum(stats["edge_kinds"].values()), stats["edge_count"])
+        self.assertEqual(sum(stats["node_kinds"].values()), stats["node_count"])
+
+    def test_edges_surface_distinct_kinds_for_same_pair(self) -> None:
+        # A consumer/producer pair declared in two substrates appears as
+        # two edge objects with distinct kinds — the substrate is no
+        # longer hidden inside the SVG.
+        root = _mkroot()
+        _gomod(root, "poly", "limitless-rs")  # poly -> limitless-rs (go)
+        _cargo(root, "poly", "limitless-rs")  # poly -> limitless-rs (rust)
+        code, stdout, err = _run(["query", "--root", str(root), "edges"])
+        self.assertEqual(code, 0, msg=err)
+        self.assertEqual(
+            json.loads(stdout)["result"],
+            [
+                {"consumer": "poly", "kind": "go", "producer": "limitless-rs"},
+                {"consumer": "poly", "kind": "rust", "producer": "limitless-rs"},
+            ],
+        )
+
+    def test_export_kinds_reject_node(self) -> None:
+        # graph-scoped: supplying --node is an error (exit 1).
+        for kind in ("graph", "edges", "nodes", "stats"):
+            code, _, err = _run(
+                ["query", "--root", str(_export_root()), kind, "--node", "casino"]
+            )
+            self.assertEqual(code, 1, msg=f"{kind} should reject --node")
+            self.assertIn("does not take --node", err)
+
+    def test_export_is_byte_identical_across_runs(self) -> None:
+        root = _export_root()
+        for kind in ("graph", "edges", "nodes", "stats"):
+            first = _run(["query", "--root", str(root), kind])[1]
+            second = _run(["query", "--root", str(root), kind])[1]
+            self.assertEqual(first, second, msg=f"{kind} not byte-identical")
+            self.assertTrue(first.strip())
+
+    def test_export_json_keys_are_sorted(self) -> None:
+        # sort_keys=True must render nested object keys in sorted order so
+        # a textual diff is stable. Check a stats payload's raw key order.
+        _, stdout, _ = _run(["query", "--root", str(_export_root()), "stats"])
+        result_block = stdout[stdout.index('"result"'):]
+        self.assertLess(
+            result_block.index('"edge_count"'),
+            result_block.index('"edge_kinds"'),
+        )
+        self.assertLess(
+            result_block.index('"edge_kinds"'),
+            result_block.index('"has_cycle"'),
+        )
+        self.assertLess(
+            result_block.index('"has_cycle"'),
+            result_block.index('"node_count"'),
+        )
+        self.assertLess(
+            result_block.index('"node_count"'),
+            result_block.index('"node_kinds"'),
+        )
 
 
 if __name__ == "__main__":
