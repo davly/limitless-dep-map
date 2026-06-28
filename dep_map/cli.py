@@ -12,12 +12,19 @@ modes:
   (``dep_map_cohort_firewall_*.svg``).
 
 ``dep-map query`` — answer one DAG query as a deterministic JSON
-envelope on stdout (``{"node": ..., "query": ..., "result": ...}`` with
-sorted object keys). This surfaces the underlying :class:`Graph` queries
-— previously library-only and unreachable from the CLI — for scripting
-and CI. Query kinds: ``blast-radius`` / ``upstream`` / ``consumers`` /
-``producers`` (node-scoped, need ``--node``); ``has-cycle`` / ``topo`` /
-``hub-degree`` (graph-scoped).
+envelope on stdout (``{"known": ..., "node": ..., "query": ...,
+"result": ...}`` with sorted object keys). This surfaces the underlying
+:class:`Graph` queries — previously library-only and unreachable from the
+CLI — for scripting and CI. Query kinds: ``blast-radius`` / ``upstream``
+/ ``consumers`` / ``producers`` (node-scoped, need ``--node``);
+``has-cycle`` / ``topo`` / ``hub-degree`` (graph-scoped).
+
+The ``known`` field is the honesty flag: for node-scoped queries it is
+``true`` iff the requested ``--node`` actually exists in the graph and
+``false`` for an unknown (e.g. typo'd) node — an unknown node also exits
+non-zero (code 5) so an empty result can never be mistaken for a clean
+"no dependents" answer. ``known`` is ``null`` for graph-scoped queries,
+which take no node.
 
 Exit codes for ``render`` (stable across versions):
 
@@ -33,6 +40,9 @@ Exit codes for ``query``:
 * 1 — invalid arguments (bad ``--root``; ``--node`` required-but-missing
   or supplied-but-rejected).
 * 4 — query could not be answered (``topo`` on a cyclic graph).
+* 5 — node-scoped query against an unknown node (the envelope is still
+  written with ``"known": false``; the non-zero exit prevents a typo'd
+  ``--node`` reading as a clean "no dependents").
 
 R145 stdlib-only — imports ``argparse``, ``json``, ``pathlib``, ``sys``.
 """
@@ -226,6 +236,10 @@ def _run_query(args: argparse.Namespace) -> int:
       missing or supplied-but-rejected for the chosen query).
     * 4 — query could not be answered: ``topo`` on a cyclic graph
       (use ``has-cycle`` to detect first).
+    * 5 — node-scoped query against an unknown node. The envelope is
+      still written (``"known": false``, empty result) so JSON consumers
+      get a complete answer, but the non-zero exit stops a typo'd
+      ``--node`` from masquerading as "no dependents".
     """
     root: Path = args.root.resolve()
     if not root.is_dir():
@@ -248,14 +262,32 @@ def _run_query(args: argparse.Namespace) -> int:
     scanner = Scanner(root=root)
     graph = Graph.from_scanner(scanner)
 
+    # dm-BU3 honesty: a node-scoped query against a node that is not in
+    # the graph would otherwise return an empty result with exit 0 —
+    # byte-identical to a real node that genuinely has no dependents. A
+    # typo'd ``--node`` would then read as a clean "no dependents". We
+    # surface the difference two ways: an explicit ``known`` flag in the
+    # envelope AND a distinct non-zero exit code (5). ``known`` is
+    # ``None`` for graph-scoped queries, which have no node.
+    known: bool | None = None
+    if kind in _NODE_QUERIES:
+        known = node in graph.all_nodes()
+
     try:
         result = _query_result(graph, kind, node)
     except ValueError as exc:
         print(f"dep-map: cannot answer '{kind}': {exc}", file=sys.stderr)
         return 4
 
-    envelope = {"query": kind, "node": node, "result": result}
+    envelope = {"known": known, "node": node, "query": kind, "result": result}
     print(json.dumps(envelope, sort_keys=True, indent=2))
+    if known is False:
+        print(
+            f"dep-map: node {node!r} is not in the graph - empty result "
+            "means the node is UNKNOWN, not that it has no dependents",
+            file=sys.stderr,
+        )
+        return 5
     return 0
 
 

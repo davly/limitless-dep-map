@@ -94,8 +94,70 @@ class TestNodeScopedQueries(unittest.TestCase):
     def test_producers_are_direct_only(self) -> None:
         self.assertEqual(self._q("producers", "report"), ["ledger"])
 
-    def test_unknown_node_returns_empty_list(self) -> None:
-        self.assertEqual(self._q("blast-radius", "ghost"), [])
+    def test_unknown_node_is_not_a_false_clean(self) -> None:
+        # dm-BU3: an unknown node is no longer exit-0/[] like a real node
+        # with no dependents — it exits 5 and is flagged known=false.
+        code, stdout, _ = _run(
+            ["query", "--root", str(self.root), "blast-radius", "--node", "ghost"]
+        )
+        self.assertEqual(code, 5)
+        env = json.loads(stdout)
+        self.assertIs(env["known"], False)
+        self.assertEqual(env["result"], [])
+
+
+class TestUnknownNodeHonesty(unittest.TestCase):
+    """dm-BU3: a typo'd --node must not masquerade as "no dependents".
+
+    Before the fix, ``blast-radius --node typo`` returned ``[]`` with
+    exit 0 — byte-identical to a real node that genuinely has no
+    dependents. The envelope now carries an explicit ``"known"`` flag and
+    an unknown node yields a distinct non-zero exit code, so neither a
+    JSON consumer nor a shell ``if`` can be fooled.
+    """
+
+    def setUp(self) -> None:
+        # report -> ledger -> casino -> reality (consumer -> producer).
+        self.root = _chain_root()
+
+    def test_unknown_node_is_flagged_not_known(self) -> None:
+        code, stdout, err = _run(
+            ["query", "--root", str(self.root), "blast-radius", "--node", "ghost"]
+        )
+        env = json.loads(stdout)
+        self.assertIs(env["known"], False)
+        self.assertEqual(env["result"], [])
+        self.assertNotEqual(code, 0, msg="unknown node must not exit 0")
+        self.assertIn("ghost", err)
+
+    def test_known_node_with_empty_result_is_marked_known(self) -> None:
+        # reality is a real node that simply depends on nothing.
+        code, stdout, _ = _run(
+            ["query", "--root", str(self.root), "producers", "--node", "reality"]
+        )
+        self.assertEqual(code, 0)
+        env = json.loads(stdout)
+        self.assertIs(env["known"], True)
+        self.assertEqual(env["result"], [])
+
+    def test_unknown_and_known_empty_are_distinguishable(self) -> None:
+        # The crux of the false-clean: an unknown node and a known-but-
+        # childless node must differ in BOTH exit code and envelope.
+        unk = _run(
+            ["query", "--root", str(self.root), "producers", "--node", "ghost"]
+        )
+        known = _run(
+            ["query", "--root", str(self.root), "producers", "--node", "reality"]
+        )
+        self.assertNotEqual(unk[0], known[0], msg="exit codes must differ")
+        self.assertNotEqual(unk[1], known[1], msg="stdout envelopes must differ")
+
+    def test_graph_scoped_query_known_is_null(self) -> None:
+        # has-cycle/topo/hub-degree have no node; "known" is null.
+        code, stdout, _ = _run(["query", "--root", str(self.root), "has-cycle"])
+        self.assertEqual(code, 0)
+        env = json.loads(stdout)
+        self.assertIsNone(env["known"])
 
 
 class TestGraphScopedQueries(unittest.TestCase):
@@ -176,8 +238,10 @@ class TestQueryDeterminismAndShape(unittest.TestCase):
             ["query", "--root", str(root), "blast-radius", "--node", "reality"]
         )
         env = json.loads(stdout)
-        self.assertEqual(sorted(env.keys()), ["node", "query", "result"])
-        # sort_keys=True means the serialised key order is node, query, result.
+        self.assertEqual(sorted(env.keys()), ["known", "node", "query", "result"])
+        # sort_keys=True means the serialised key order is known, node,
+        # query, result.
+        self.assertLess(stdout.index('"known"'), stdout.index('"node"'))
         self.assertLess(stdout.index('"node"'), stdout.index('"query"'))
         self.assertLess(stdout.index('"query"'), stdout.index('"result"'))
 
