@@ -272,12 +272,16 @@ class TestQueryDeterminismAndShape(unittest.TestCase):
             ["query", "--root", str(root), "blast-radius", "--node", "reality"]
         )
         env = json.loads(stdout)
-        self.assertEqual(sorted(env.keys()), ["known", "node", "query", "result"])
+        self.assertEqual(
+            sorted(env.keys()),
+            ["known", "node", "query", "result", "schema_version"],
+        )
         # sort_keys=True means the serialised key order is known, node,
-        # query, result.
+        # query, result, schema_version.
         self.assertLess(stdout.index('"known"'), stdout.index('"node"'))
         self.assertLess(stdout.index('"node"'), stdout.index('"query"'))
         self.assertLess(stdout.index('"query"'), stdout.index('"result"'))
+        self.assertLess(stdout.index('"result"'), stdout.index('"schema_version"'))
 
     def test_repeated_runs_are_byte_identical(self) -> None:
         root = _mkroot()
@@ -288,6 +292,45 @@ class TestQueryDeterminismAndShape(unittest.TestCase):
         second = _run(["query", "--root", str(root), "hub-degree"])[1]
         self.assertEqual(first, second)
         self.assertTrue(first.strip())
+
+
+class TestSchemaVersion(unittest.TestCase):
+    """dm-version: every query envelope carries a schema_version integer.
+
+    A JSON consumer gates on this field to detect an envelope-shape
+    change. It is a constant for a given build (deterministic) and is
+    present for both node-scoped and graph-scoped queries.
+    """
+
+    def test_envelope_carries_schema_version(self) -> None:
+        root = _chain_root()
+        _, stdout, _ = _run(["query", "--root", str(root), "has-cycle"])
+        env = json.loads(stdout)
+        self.assertEqual(env["schema_version"], cli.SCHEMA_VERSION)
+        self.assertIsInstance(env["schema_version"], int)
+
+    def test_schema_version_present_on_node_scoped(self) -> None:
+        root = _chain_root()
+        _, stdout, _ = _run(
+            ["query", "--root", str(root), "blast-radius", "--node", "reality"]
+        )
+        self.assertIn("schema_version", json.loads(stdout))
+
+    def test_schema_version_present_on_unknown_node(self) -> None:
+        # Even the known=false (exit 5) envelope is fully formed.
+        root = _chain_root()
+        _, stdout, _ = _run(
+            ["query", "--root", str(root), "blast-radius", "--node", "ghost"]
+        )
+        self.assertEqual(json.loads(stdout)["schema_version"], cli.SCHEMA_VERSION)
+
+    def test_schema_version_constant_across_kinds(self) -> None:
+        root = _export_root()
+        seen = set()
+        for kind in ("edges", "nodes", "graph", "stats", "has-cycle"):
+            _, stdout, _ = _run(["query", "--root", str(root), kind])
+            seen.add(json.loads(stdout)["schema_version"])
+        self.assertEqual(seen, {cli.SCHEMA_VERSION})
 
 
 class TestFullGraphExport(unittest.TestCase):

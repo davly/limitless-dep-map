@@ -34,7 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dep_map import cli  # noqa: E402
+from dep_map import __version__, cli  # noqa: E402
 from dep_map.render import MARK_PREFIX  # noqa: E402
 
 
@@ -239,6 +239,32 @@ class TestFilterModesProduceOutput(unittest.TestCase):
         self.assertIn("Custom Map Heading 9000", text)
         self.assertIn('width="900"', text)
         self.assertIn('height="700"', text)
+
+
+class TestVersionFlag(unittest.TestCase):
+    """dm-version: ``dep-map --version`` prints the version and exits 0.
+
+    The version action must fire before the required sub-command is
+    enforced, so ``--version`` works with no sub-command supplied.
+    """
+
+    def test_version_flag_prints_and_exits_zero(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                cli.main(["--version"])
+        self.assertEqual(ctx.exception.code, 0)
+        printed = out.getvalue()
+        self.assertIn("dep-map", printed)
+        self.assertIn(__version__, printed)
+
+    def test_version_string_matches_package_version(self) -> None:
+        # The printed token is exactly "dep-map <__version__>".
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit):
+                cli.main(["--version"])
+        self.assertEqual(out.getvalue().strip(), f"dep-map {__version__}")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,9 @@ modes:
 
 ``dep-map query`` — answer one DAG query as a deterministic JSON
 envelope on stdout (``{"known": ..., "node": ..., "query": ...,
-"result": ...}`` with sorted object keys). This surfaces the underlying
+"result": ..., "schema_version": ...}`` with sorted object keys; the
+``schema_version`` integer lets a consumer detect an envelope-shape
+change). This surfaces the underlying
 :class:`Graph` queries — previously library-only and unreachable from the
 CLI — for scripting and CI. Query kinds: ``blast-radius`` / ``upstream``
 / ``consumers`` / ``producers`` (node-scoped, need ``--node``);
@@ -50,7 +52,13 @@ Exit codes for ``query``:
   written with ``"known": false``; the non-zero exit prevents a typo'd
   ``--node`` reading as a clean "no dependents").
 
-R145 stdlib-only — imports ``argparse``, ``json``, ``pathlib``, ``sys``.
+A top-level ``--version`` flag prints ``dep-map <version>`` and exits 0
+(the tool release version, distinct from the query envelope's
+``schema_version``).
+
+R145 stdlib-only — imports ``argparse``, ``json``, ``pathlib``, ``sys``
+(stdlib) plus the intra-package ``__version__`` constant; no third-party
+dependency.
 """
 
 from __future__ import annotations
@@ -60,9 +68,19 @@ import json
 import sys
 from pathlib import Path
 
+from dep_map import __version__
 from dep_map.graph import Graph
 from dep_map.render import render_svg
 from dep_map.scanner import NodeKind, Scanner
+
+# dm-version: schema version for the ``query`` JSON envelope, declared
+# INLINE here (no shared cross-tool version lib). This is bumped ONLY when
+# the envelope's *shape* changes (a key added/removed/retyped) — it is the
+# field a JSON consumer gates on. It is deliberately decoupled from the
+# package ``--version`` (``__version__``), which tracks releases and can
+# bump without the envelope schema changing. Integer-monotonic: 1 is the
+# first published shape ({known, node, query, result} + this field).
+SCHEMA_VERSION = 1
 
 # Query kinds the ``query`` sub-command can answer. The four node-scoped
 # queries require ``--node``; the three graph-scoped queries reject it.
@@ -106,6 +124,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dep-map",
         description="Limitless ecosystem dependency-graph SVG renderer.",
+    )
+    # dm-version: ``dep-map --version`` prints the package version and
+    # exits 0 before the required sub-command is enforced (argparse fires
+    # the version action as the token is consumed). This is the tool
+    # release version; the query envelope's schema_version is separate.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"dep-map {__version__}",
+        help="Print the dep-map version and exit.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -317,7 +345,15 @@ def _run_query(args: argparse.Namespace) -> int:
         print(f"dep-map: cannot answer '{kind}': {exc}", file=sys.stderr)
         return 4
 
-    envelope = {"known": known, "node": node, "query": kind, "result": result}
+    envelope = {
+        "known": known,
+        "node": node,
+        "query": kind,
+        "result": result,
+        # dm-version: lets a JSON consumer detect an envelope-shape change
+        # without parsing it speculatively. Sorts last under sort_keys.
+        "schema_version": SCHEMA_VERSION,
+    }
     print(json.dumps(envelope, sort_keys=True, indent=2))
     if known is False:
         print(
