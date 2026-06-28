@@ -26,22 +26,81 @@ cd limitless-dep-map
 PYTHONPATH=. python -m dep_map.cli render --root /path/to/limitless --out dep_map.svg
 ```
 
-Sub-commands:
+`dep-map --version` prints `dep-map <version>` and exits 0 (the tool
+release version; distinct from the query envelope's `schema_version`).
+
+### `render` — emit the dependency map as SVG
 
 ```
-dep-map render --root <monorepo> --out <svg>            # full ecosystem
+dep-map render --root <monorepo> --out <svg>            # full ecosystem (default)
 dep-map render --root <monorepo> --out <svg> --layer infra
 dep-map render --root <monorepo> --out <svg> --firewall-only
 ```
 
-Exit codes:
+Flags: `--layer {infra,flagship,engine,foundation,sdk}` restricts to a
+single layer; `--firewall-only` keeps only R145.C cohort-firewall edges
+(producer is a known cohort hub); `--title`, `--width` (default 1600),
+`--height` (default 1600) control the canvas.
+
+`render` exit codes (stable across versions):
 
 | Exit | Meaning |
 |---|---|
-| 0  | SVG written |
+| 0  | SVG written to `--out` |
 | 1  | invalid arguments |
-| 2  | empty graph after filters (root likely wrong) |
-| 3  | IO error writing the SVG |
+| 2  | empty graph after filters (root likely wrong); no SVG written |
+| 3  | IO error writing the SVG (disk full / permission denied) |
+
+### `query` — answer one DAG query as deterministic JSON
+
+```
+dep-map query --root <monorepo> <KIND> [--node <name>]
+```
+
+Writes a byte-reproducible JSON envelope to stdout (object keys sorted;
+result collections in a stable order):
+
+```json
+{
+  "known": true,
+  "node": "foundation/reality",
+  "query": "blast-radius",
+  "result": ["casino", "ledger", "report"],
+  "schema_version": 1
+}
+```
+
+- `known` — honesty flag. For node-scoped queries it is `true` iff
+  `--node` exists in the graph and `false` for an unknown (typo'd) node;
+  `null` for graph-scoped queries (which take no node).
+- `schema_version` — integer envelope-shape version (bumped only when a
+  key is added/removed/retyped), so a consumer detects shape drift
+  without speculatively parsing.
+
+Query kinds:
+
+| KIND | Scope | Result |
+|---|---|---|
+| `blast-radius` | node (`--node`) | transitive consumers, name-sorted |
+| `upstream`     | node (`--node`) | transitive producers, name-sorted |
+| `consumers`    | node (`--node`) | direct consumers, name-sorted |
+| `producers`    | node (`--node`) | direct producers, name-sorted |
+| `has-cycle`    | graph           | `bool` |
+| `topo`         | graph           | nodes in topological order |
+| `hub-degree`   | graph           | `[name, degree]` pairs, descending degree then name |
+| `graph`        | graph           | `{edges, nodes}` — the whole DAG |
+| `edges`        | graph           | every edge `{consumer, kind, producer}`, sorted |
+| `nodes`        | graph           | every node `{kind, name}` with its layer, sorted |
+| `stats`        | graph           | summary counts (edge/node totals, by-kind + by-layer histograms, `has_cycle`) |
+
+`query` exit codes:
+
+| Exit | Meaning |
+|---|---|
+| 0  | query answered, JSON envelope written to stdout |
+| 1  | invalid arguments (bad `--root`; `--node` required-but-missing or supplied-but-rejected) |
+| 4  | query could not be answered (`topo` on a cyclic graph — use `has-cycle` first) |
+| 5  | node-scoped query against an unknown node (envelope still written with `"known": false`; non-zero exit stops a typo reading as "no dependents") |
 
 ## Substrates detected
 
@@ -92,8 +151,11 @@ Each SVG carries:
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
 
-61 tests covering scanner per-substrate, graph adjacency + filters,
-renderer determinism + Mirror-Mark round-trip + R166 footer + CLI parser.
+188 tests covering scanner per-substrate, graph adjacency + filters +
+exports, renderer determinism (incl. cross-process) + Mirror-Mark
+round-trip + R166 footer, the CLI parser, both sub-commands end-to-end
+(render exit codes 0-3; query envelope, kinds, exit codes 0/1/4/5,
+`schema_version`), and `--version`.
 
 ## Cohort cross-references
 
