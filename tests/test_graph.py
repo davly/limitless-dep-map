@@ -12,8 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dep_map.graph import FIREWALL_HUBS, Graph  # noqa: E402
-from dep_map.scanner import Edge, NodeKind  # noqa: E402
+from dep_map.graph import _NON_FIREWALL_HUBS, FIREWALL_HUBS, Graph  # noqa: E402
+from dep_map.scanner import HUB_NAMES, Edge, NodeKind  # noqa: E402
 
 
 def _e(c: str, p: str, k: str = "go") -> Edge:
@@ -129,6 +129,34 @@ class TestFilters(unittest.TestCase):
         self.assertIn("limitless-rs", FIREWALL_HUBS)
         sub = self.g.filter_firewall()
         self.assertIn(_e("foundry", "limitless-rs", "rust"), sub.edges)
+
+
+class TestFirewallHubsDerivation(unittest.TestCase):
+    """dm-BU8: FIREWALL_HUBS is derived from the single hub table.
+
+    There is no longer a hand-maintained second list. FIREWALL_HUBS is
+    exactly HUB_NAMES minus the explicit non-firewall exclusions, so a hub
+    added to HUB_NAMES cannot silently fall out of the firewall audit.
+    """
+
+    def test_firewall_is_hub_names_minus_exclusions(self) -> None:
+        self.assertEqual(FIREWALL_HUBS, HUB_NAMES - _NON_FIREWALL_HUBS)
+
+    def test_firewall_is_a_subset_of_hub_names(self) -> None:
+        self.assertTrue(FIREWALL_HUBS <= HUB_NAMES)
+
+    def test_only_excluded_hub_is_forge_go(self) -> None:
+        # Locks in the pre-unification membership (the sole difference was
+        # forge-go); a new exclusion must be a deliberate edit here.
+        self.assertEqual(HUB_NAMES - FIREWALL_HUBS, frozenset({"forge-go"}))
+
+    def test_every_hub_except_exclusions_is_a_firewall_pin(self) -> None:
+        for hub in HUB_NAMES:
+            self.assertEqual(
+                hub in FIREWALL_HUBS,
+                hub not in _NON_FIREWALL_HUBS,
+                msg=f"{hub} firewall membership diverged from the table",
+            )
 
 
 class TestHubDegree(unittest.TestCase):

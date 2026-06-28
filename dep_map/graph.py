@@ -20,38 +20,21 @@ from dep_map.scanner import Edge, HUB_NAMES, NodeKind, Scanner
 
 # Cohort hubs whose consumer edges participate in the R145.C firewall.
 # The firewall snapshot draws only edges whose producer is in this set.
-# Membership is intentionally broader than ``HUB_NAMES`` minus a few
-# entries — we want every shared-lib (BEAM OTP, C crypto, evidence
-# bundle, Mirror-Mark verifier) to count as a firewall pin source so the
-# audit answer "is every cross-substrate port pinned?" stays honest.
-FIREWALL_HUBS: frozenset[str] = frozenset(
-    {
-        "limitless-beam-otp",
-        "limitless-c-crypto",
-        "limitless-py",
-        "limitless-rs",
-        "limitless-ts",
-        "limitless-jvm",
-        "limitless-hs",
-        "limitless-evidence-bundle",
-        "limitless-ai-watermark",
-        "limitless-almanac-cohort",
-        "lore-mark-verify",
-        "limitless-cohort-map",
-        "limitless-dep-map",
-        "limitless-sdk",
-        "limitless-proto",
-        "limitless-solidity",
-        "limitless-cpp",
-        "limitless-dotnet",
-        "limitless-ui",
-        "foundation/reality",
-        "foundation/pkg",
-        "foundation/aicore",
-        "foundation/knowledge",
-        "nexus-ai",
-    }
-)
+#
+# dm-BU8: derived from the single source-of-truth hub table
+# (``HUB_NAMES`` in scanner.py) rather than re-listed. The R145.C firewall
+# wants every cohort shared-lib (BEAM OTP, C crypto, evidence bundle,
+# Mirror-Mark verifier, ...) to count as a pin source, so the default is
+# "every hub is a firewall hub" and only explicit exclusions are listed
+# below. Deriving instead of duplicating removes the drift risk where a
+# hub added to ``HUB_NAMES`` but forgotten here (or vice-versa) silently
+# distorts the firewall audit. This preserves the prior membership
+# byte-for-byte: the sole pre-unification difference was ``forge-go``.
+#
+# ``forge-go`` is the lone hub kept out of the firewall snapshot,
+# matching the membership before unification (it was never in this set).
+_NON_FIREWALL_HUBS: frozenset[str] = frozenset({"forge-go"})
+FIREWALL_HUBS: frozenset[str] = HUB_NAMES - _NON_FIREWALL_HUBS
 
 
 @dataclass
