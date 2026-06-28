@@ -355,7 +355,24 @@ class Scanner:
         r"^\s*(?:require\s+)?([a-zA-Z0-9_\-./]+)\s+v[0-9]"
     )
 
+    # A trailing ``// indirect`` marker (written by ``go mod tidy``) flags a
+    # transitive pin the module does NOT import directly. The declared-edges
+    # map shows direct dependencies only, so these are dropped. Tolerant of
+    # ``go``'s exact spacing plus the occasional trailing reason comment
+    # (``// indirect; pinned for build``); the import path itself can never
+    # match because the ``//`` comment prefix is required.
+    _GO_INDIRECT_RE = re.compile(r"//\s*indirect\b")
+
     def _parse_go_mod(self, path: Path, consumer: str) -> list[Edge]:
+        """Yield cohort edges declared by a ``go.mod``'s ``require`` stanzas.
+
+        Both the single-line and ``require ( ... )`` block forms are
+        parsed. Lines carrying a ``// indirect`` marker are skipped: an
+        indirect require is a transitive pin, not a direct dependency, and
+        this map reports direct declared edges only (the module docstring's
+        "does not resolve indirect deps" contract). ``_go_edge`` then drops
+        any remaining non-cohort (stdlib / third-party) import.
+        """
         edges: list[Edge] = []
         in_block = False
         with path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -372,14 +389,14 @@ class Scanner:
                     continue
                 if in_block:
                     m = self._GO_REQUIRE_RE.match(stripped)
-                    if m:
+                    if m and not self._GO_INDIRECT_RE.search(stripped):
                         edge = self._go_edge(consumer, m.group(1))
                         if edge is not None:
                             edges.append(edge)
                     continue
                 if stripped.startswith("require "):
                     m = self._GO_REQUIRE_RE.match(stripped)
-                    if m:
+                    if m and not self._GO_INDIRECT_RE.search(stripped):
                         edge = self._go_edge(consumer, m.group(1))
                         if edge is not None:
                             edges.append(edge)
@@ -394,8 +411,11 @@ class Scanner:
         * ``github.com/davly/<repo>/...`` — sub-package of a cohort lib.
         * ``foundation/pkg/<sub>`` — bare in-tree foundation reference.
 
-        Everything else (stdlib third-party deps, indirect deps) is
-        dropped.
+        Everything else (stdlib / third-party non-cohort imports) is
+        dropped. ``// indirect`` requires are filtered earlier in
+        :meth:`_parse_go_mod` — they cannot be detected here because this
+        method only receives the import path, not the line's trailing
+        comment.
         """
         if import_path.startswith("github.com/davly/"):
             tail = import_path[len("github.com/davly/"):]

@@ -91,6 +91,59 @@ require github.com/davly/casino v0.0.0
         edges = Scanner(root=root).scan_sorted()
         self.assertEqual(edges, [])
 
+    def test_drops_indirect_block_require(self) -> None:
+        # B7/dm-BU4: a ``// indirect`` require is a transitive pin, not a
+        # direct dependency. The declared-edges map drops it (the _go_edge
+        # docstring already promised this; the parser now honours it).
+        root = _mkroot()
+        _write(root / "flagships" / "casino" / "go.mod", """
+module github.com/davly/casino
+go 1.24
+require (
+    github.com/davly/reality v0.0.0
+    github.com/davly/ghostlib v0.0.0 // indirect
+)
+""")
+        edges = Scanner(root=root).scan_sorted()
+        self.assertEqual(
+            edges,
+            [Edge(consumer="casino", producer="reality", kind="go")],
+        )
+
+    def test_drops_indirect_single_line_require(self) -> None:
+        root = _mkroot()
+        _write(root / "flagships" / "anvil" / "go.mod", """
+module github.com/davly/anvil
+go 1.22
+require github.com/davly/foundation v1.0.0
+require github.com/davly/transitive v0.0.0 // indirect
+""")
+        edges = Scanner(root=root).scan_sorted()
+        self.assertEqual(
+            edges,
+            [Edge(consumer="anvil", producer="foundation", kind="go")],
+        )
+
+    def test_indirect_marker_variants_are_dropped(self) -> None:
+        # ``go mod tidy`` writes "// indirect"; tolerate spacing and a
+        # trailing reason ("// indirect; needed for build").
+        root = _mkroot()
+        _write(root / "flagships" / "vault" / "go.mod", """
+module github.com/davly/vault
+go 1.24
+require (
+    github.com/davly/keep v0.0.0
+    github.com/davly/a v0.0.0 //indirect
+    github.com/davly/b v0.0.0 //   indirect
+    github.com/davly/c v0.0.0 // indirect; pinned for reproducible build
+)
+""")
+        edges = Scanner(root=root).scan_sorted()
+        self.assertEqual(
+            edges,
+            [Edge(consumer="vault", producer="keep", kind="go")],
+        )
+
     def test_skips_third_party(self) -> None:
         root = _mkroot()
         _write(root / "flagships" / "casino" / "go.mod", """
