@@ -11,8 +11,12 @@ is to faithfully report what each manifest says, so a downstream
 between declared and resolved edges is a separate audit (see
 ``apps/audit`` and ``apps/lighthouse``).
 
-R143 LOUD-ONCE-WARNING: unrecognised manifests fire a single stderr
-warning per process (via the :class:`LoudOnce` helper below) then skip.
+R143 LOUD-ONCE-WARNING: a manifest the scanner cannot parse — whether
+syntactically broken (bad TOML/JSON) or structurally malformed (e.g. a
+``package.json`` that is a top-level JSON array, or a ``pyproject.toml``
+whose ``[project]`` is not a table) — fires a single stderr warning per
+process (via the :class:`LoudOnce` helper below) then skips. One bad
+manifest never crashes the walk or drops the rest of the graph.
 
 R145 stdlib-only firewall: the scanner imports only ``dataclasses``,
 ``enum``, ``io``, ``json``, ``os``, ``pathlib``, ``re``, ``sys``,
@@ -334,8 +338,24 @@ class Scanner:
                 return self._parse_rebar_config(path, consumer)
             if name == "mix.exs":
                 return self._parse_mix_exs(path, consumer)
-        except (OSError, ValueError, tomllib.TOMLDecodeError, json.JSONDecodeError) as exc:
-            # Parsing failures fire a single R143 warning and skip.
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            AttributeError,
+            tomllib.TOMLDecodeError,
+            json.JSONDecodeError,
+        ) as exc:
+            # R143: any manifest the parser cannot handle fires one
+            # LOUD-ONCE warning and is skipped — never crashing the walk
+            # or dropping the rest of the graph. ``TOMLDecodeError`` and
+            # ``JSONDecodeError`` (both ValueError subclasses) cover
+            # syntactically-broken manifests; ``TypeError`` /
+            # ``AttributeError`` cover the structurally-malformed shapes a
+            # parser's type guards can miss — a ``package.json`` whose
+            # top-level value is a JSON array, or a ``pyproject.toml``
+            # whose ``[project]`` is not a table, would otherwise blow up
+            # on a bare ``.get`` and abort the entire scan.
             self._loud.fire(
                 self._stderr,
                 f"manifest parse failed: {path} ({exc.__class__.__name__})",
