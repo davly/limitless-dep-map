@@ -50,8 +50,10 @@ visualisation of declared monorepo edges, intended to surface:
    (flagship importing engine internals, or engine importing flagship),
    the edge shows up.
 3. **Hub degree** — degree-centrality of ``limitless-py`` /
-   ``limitless-rs`` / ``foundation/reality`` etc. signals where a cohort
-   migration would land hardest.
+   ``limitless-rs`` / ``reality`` etc. signals where a cohort
+   migration would land hardest. (Hub names are the scanner-emitted
+   producer spellings — the Go repo tail, e.g. ``reality``, not
+   ``foundation/reality``.)
 
 R145 (stdlib-only firewall) — this package imports nothing outside the
 Python standard library. ``xml.etree.ElementTree`` produces the SVG;

@@ -101,6 +101,19 @@ class NodeKind(str, Enum):
 # Membership matters at render time (bigger glyph, R145.C firewall pin
 # colour). The list is data, not code — adding a hub here is the only
 # thing required to bring it into the firewall snapshot.
+#
+# Spelling contract: every entry MUST be a name a parser branch can
+# actually emit, or it is a dead entry that silently never matches. The
+# Go parser emits the repo tail of ``github.com/davly/<repo>`` (so the
+# foundation hubs are ``reality`` / ``aicore`` / ``knowledge`` /
+# ``foundation``, NOT ``foundation/<x>``) plus the literal
+# ``foundation/pkg`` for bare in-tree references — the ONLY hub name
+# allowed to contain a slash. Rust crate names, Python dist names and
+# npm names (post ``@limitless/`` strip) cannot contain ``/`` either.
+# The original list spelled the four foundation hubs path-style, which
+# excluded the estate's #1 hub (``reality``, 108 consumers) from
+# hub-degree and the firewall snapshot entirely; tests now pin the
+# emittable-spelling contract.
 HUB_NAMES = frozenset(
     {
         "limitless-py",
@@ -116,10 +129,11 @@ HUB_NAMES = frozenset(
         "lore-mark-verify",
         "limitless-cohort-map",
         "limitless-dep-map",
-        "foundation/reality",
+        "reality",
+        "foundation",
         "foundation/pkg",
-        "foundation/aicore",
-        "foundation/knowledge",
+        "aicore",
+        "knowledge",
         "nexus-ai",
         "limitless-sdk",
         "limitless-proto",

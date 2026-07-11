@@ -239,6 +239,24 @@ class TestGraphScopedQueries(unittest.TestCase):
         result = json.loads(stdout)["result"]
         self.assertEqual(result, [["limitless-py", 3], ["limitless-rs", 1]])
 
+    def test_hub_degree_ranks_parser_emitted_foundation_hubs(self) -> None:
+        # Regression (2026-07-11): HUB_NAMES spelled the foundation hubs
+        # path-style ("foundation/reality") — names no parser branch can
+        # emit — so the estate's top hubs (reality: 108 real consumers)
+        # were invisible to hub-degree. The Go parser emits the repo
+        # tail: "reality". Degrees here stay below the emergent-hub
+        # threshold so this exercises the allowlist spelling, not the
+        # degree safeguard.
+        root = _mkroot()
+        _gomod(root, "casino", "reality")
+        _gomod(root, "ledger", "reality")
+        _gomod(root, "folio", "aicore")
+        code, stdout, _ = _run(["query", "--root", str(root), "hub-degree"])
+        self.assertEqual(code, 0)
+        result = json.loads(stdout)["result"]
+        self.assertIn(["reality", 2], result)
+        self.assertIn(["aicore", 1], result)
+
 
 class TestQueryArgErrors(unittest.TestCase):
     def test_node_query_without_node_is_exit_one(self) -> None:

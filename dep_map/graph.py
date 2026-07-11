@@ -3,7 +3,7 @@
 A thin in-memory adjacency representation that stays substrate-agnostic.
 The scanner emits :class:`~dep_map.scanner.Edge` triples; this module
 collects them into an O(1)-lookup graph that can answer "who consumes
-``foundation/reality``?" and "what does ``insights`` depend on?" without
+``reality``?" and "what does ``insights`` depend on?" without
 re-walking disk.
 
 R145 firewall: stdlib only (``collections``, ``dataclasses``).
@@ -35,6 +35,21 @@ from dep_map.scanner import Edge, HUB_NAMES, NodeKind, Scanner
 # matching the membership before unification (it was never in this set).
 _NON_FIREWALL_HUBS: frozenset[str] = frozenset({"forge-go"})
 FIREWALL_HUBS: frozenset[str] = HUB_NAMES - _NON_FIREWALL_HUBS
+
+# Safeguard threshold for :meth:`Graph.hub_degree`: any node with at
+# least this many direct consumers is a de-facto hub and is reported
+# even when ``HUB_NAMES`` does not list it. This exists because the hub
+# allowlist has already silently lost the estate's four biggest hubs
+# once — the entries were spelled path-style (``foundation/reality``),
+# a form no parser branch can emit, so ``reality`` (108 consumers) was
+# invisible to the ranking while ``limitless-evidence-bundle`` (4) was
+# reported as the top hub. With the safeguard, a spelling drift between
+# HUB_NAMES and the scanner's emitted producer names degrades to "the
+# hub shows up unlabelled" instead of "the hub disappears". The value 3
+# is calibrated against the live estate: after the respelling, no
+# non-allowlisted node reaches it today (next tier is in-degree 2), so
+# the safeguard adds zero noise now and pure protection later.
+EMERGENT_HUB_MIN_DEGREE: int = 3
 
 
 @dataclass
@@ -153,10 +168,21 @@ class Graph:
     def hub_degree(self) -> dict[str, int]:
         """Map every hub node to its in-degree (number of consumers).
 
-        Used by the renderer to order hubs by popularity — the most-
-        consumed hub gets the centre slot — and by the ``query
-        hub-degree`` CLI mode, which emits the result as part of a
-        byte-reproducible JSON answer.
+        Used by the ``query hub-degree`` CLI mode, which emits the
+        result as part of a byte-reproducible JSON answer ranking where
+        a cohort migration would land hardest.
+
+        Hub membership is the union of two sources:
+
+        * the curated ``HUB_NAMES`` allowlist — a well-known hub is
+          reported even at degree 0 (a hub nobody consumes yet is still
+          a hub); and
+        * any **emergent** hub — a node whose in-degree is at least
+          :data:`EMERGENT_HUB_MIN_DEGREE`, whether or not the allowlist
+          names it. This is the safeguard against dead allowlist
+          entries (see the constant's comment): a heavily-consumed node
+          can no longer be hidden by a spelling drift between
+          ``HUB_NAMES`` and the scanner's emitted producer names.
 
         The returned dict is ordered by **descending degree, then
         ascending node name** so iteration is deterministic. The previous
@@ -173,6 +199,12 @@ class Graph:
             for node in HUB_NAMES
             if node in nodes
         }
+        for node in nodes:
+            if node in degrees:
+                continue
+            degree = len(self.incoming.get(node, set()))
+            if degree >= EMERGENT_HUB_MIN_DEGREE:
+                degrees[node] = degree
         return {
             node: degree
             for node, degree in sorted(

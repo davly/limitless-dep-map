@@ -12,7 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dep_map.graph import _NON_FIREWALL_HUBS, FIREWALL_HUBS, Graph  # noqa: E402
+from dep_map.graph import (  # noqa: E402
+    _NON_FIREWALL_HUBS,
+    EMERGENT_HUB_MIN_DEGREE,
+    FIREWALL_HUBS,
+    Graph,
+)
 from dep_map.scanner import HUB_NAMES, Edge, NodeKind  # noqa: E402
 
 
@@ -113,11 +118,14 @@ class TestFilters(unittest.TestCase):
 
     def test_filter_firewall_only_hubs(self) -> None:
         sub = self.g.filter_firewall()
-        # All cohort-hub producers are kept (reality, limitless-rs).
-        # casino->reality, nexus->reality, oracle->reality survive
-        # because reality is in FIREWALL_HUBS via foundation/reality
-        # (we use the bare "reality" name in this fixture so depend on
-        # the alias path). Check by predicate.
+        # All cohort-hub producers are kept. Bare "reality" is the
+        # parser-emitted spelling and IS a firewall hub, so
+        # casino/nexus/oracle -> reality survive alongside
+        # foundry -> limitless-rs. (Historically the hub table spelled
+        # it "foundation/reality" — a name no parser emits — and this
+        # test passed vacuously because the reality edges were silently
+        # dropped before the predicate loop ran.)
+        self.assertEqual(sub.edge_count(), 4)
         for edge in sub.edges:
             self.assertTrue(
                 edge.producer in FIREWALL_HUBS,
@@ -170,6 +178,55 @@ class TestHubDegree(unittest.TestCase):
         degree = g.hub_degree()
         self.assertEqual(degree.get("limitless-py"), 3)
         self.assertEqual(degree.get("limitless-rs"), 1)
+
+    def test_foundation_hubs_ranked_under_emitted_names(self) -> None:
+        # Regression (2026-07-11): reality/aicore/knowledge/foundation are
+        # what the Go parser emits (repo tail of github.com/davly/<repo>),
+        # and they must rank via HUB_NAMES membership — every fixture node
+        # here is BELOW the emergent-degree threshold, so the safeguard
+        # cannot mask a missing allowlist entry.
+        g = Graph.from_edges([
+            _e("casino", "reality"),
+            _e("nexus", "aicore"),
+            _e("oracle", "knowledge"),
+            _e("ledger", "foundation"),
+        ])
+        degree = g.hub_degree()
+        self.assertEqual(degree.get("reality"), 1)
+        self.assertEqual(degree.get("aicore"), 1)
+        self.assertEqual(degree.get("knowledge"), 1)
+        self.assertEqual(degree.get("foundation"), 1)
+
+    def test_emergent_hub_above_threshold_is_reported(self) -> None:
+        # Safeguard: a node with >= EMERGENT_HUB_MIN_DEGREE consumers is a
+        # de-facto hub and must be reported even though HUB_NAMES omits
+        # it — a dead/misspelled allowlist entry can no longer hide a
+        # heavily-consumed hub.
+        g = Graph.from_edges([
+            _e("a", "hotlib"),
+            _e("b", "hotlib"),
+            _e("c", "hotlib"),
+        ])
+        self.assertNotIn("hotlib", HUB_NAMES)
+        self.assertEqual(g.hub_degree().get("hotlib"), 3)
+
+    def test_below_threshold_non_hub_stays_hidden(self) -> None:
+        # The hub lens is preserved: a low-degree non-allowlisted node
+        # does not leak into the ranking.
+        g = Graph.from_edges([
+            _e("a", "warmlib"),
+            _e("b", "warmlib"),
+            _e("a", "limitless-py", "python"),
+        ])
+        degree = g.hub_degree()
+        self.assertNotIn("warmlib", degree)
+        self.assertEqual(degree.get("limitless-py"), 1)
+
+    def test_emergent_threshold_is_locked(self) -> None:
+        # Locks the calibrated value (see graph.py comment): 3 adds zero
+        # noise on the live estate today. Changing it must be a
+        # deliberate edit here.
+        self.assertEqual(EMERGENT_HUB_MIN_DEGREE, 3)
 
 
 class TestIteration(unittest.TestCase):

@@ -437,6 +437,57 @@ class TestHubNames(unittest.TestCase):
         for h in ("limitless-py", "limitless-rs", "limitless-ts", "limitless-beam-otp"):
             self.assertIn(h, HUB_NAMES)
 
+    def test_foundation_hubs_use_parser_emitted_spellings(self) -> None:
+        # Regression (2026-07-11): the foundation hubs were spelled
+        # path-style ("foundation/reality") — a form NO parser branch
+        # can emit (_go_edge produces the repo tail of
+        # github.com/davly/<repo>) — so the estate's #1 hub (reality,
+        # 108 consumers) was silently absent from hub-degree and the
+        # firewall snapshot. The entries must use the emitted spellings.
+        for h in ("reality", "aicore", "knowledge", "foundation"):
+            self.assertIn(h, HUB_NAMES, msg=f"emitted hub spelling {h!r} missing")
+        for dead in (
+            "foundation/reality",
+            "foundation/aicore",
+            "foundation/knowledge",
+        ):
+            self.assertNotIn(
+                dead, HUB_NAMES, msg=f"dead path-style entry {dead!r} present"
+            )
+
+    def test_every_hub_name_is_parser_emittable(self) -> None:
+        # Spelling contract: no parser branch emits a producer containing
+        # "/" except the literal "foundation/pkg" (_go_edge's bare
+        # in-tree branch). Go emits the tail before the first slash;
+        # Rust crate names, Python dist names (_PY_DIST_RE) and npm names
+        # (post @limitless/ strip) cannot contain "/". Any other slashed
+        # entry is dead: it can never intersect the scanned graph.
+        for h in HUB_NAMES:
+            if h == "foundation/pkg":
+                continue
+            self.assertNotIn(
+                "/",
+                h,
+                msg=(
+                    f"HUB_NAMES entry {h!r} contains '/' and can never be "
+                    "emitted by any parser branch (dead entry)"
+                ),
+            )
+
+    def test_go_edge_to_foundation_hub_lands_in_hub_names(self) -> None:
+        # End-to-end: a go.mod requiring github.com/davly/reality emits a
+        # producer that IS a hub. Without the respelling the emitted
+        # producer ("reality") missed HUB_NAMES and every hub-membership
+        # consumer (hub-degree, firewall, render sizing) dropped it.
+        root = _mkroot()
+        _write(root / "flagships" / "casino" / "go.mod", """
+module github.com/davly/casino
+require github.com/davly/reality v0.0.0
+""")
+        edges = Scanner(root=root).scan_sorted()
+        self.assertEqual(len(edges), 1)
+        self.assertIn(edges[0].producer, HUB_NAMES)
+
 
 if __name__ == "__main__":
     unittest.main()
