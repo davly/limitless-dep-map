@@ -283,6 +283,54 @@ class TestQueryArgErrors(unittest.TestCase):
         self.assertIn("is not a directory", err)
 
 
+class TestEmptyGraphGuard(unittest.TestCase):
+    """An existing-but-wrong ``--root`` must not read as a clean answer.
+
+    ``render`` refuses an empty graph with exit 2; ``query`` historically
+    returned e.g. ``hub-degree []`` with exit 0 on a root containing none
+    of the layer directories — indistinguishable from "no hubs anywhere".
+    The guard refuses (exit 2, no envelope) and names the root.
+    """
+
+    def setUp(self) -> None:
+        # A real directory that is NOT a monorepo root (no layer dirs).
+        self.root = Path(tempfile.mkdtemp(prefix="depmap_wrongroot_"))
+
+    def test_graph_scoped_query_on_empty_graph_exits_two(self) -> None:
+        code, stdout, err = _run(
+            ["query", "--root", str(self.root), "hub-degree"]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "", msg="no envelope on refusal")
+        self.assertIn("empty graph", err)
+        # The message must name the (resolved) root so the operator can
+        # see which path walked empty.
+        self.assertIn(str(self.root.resolve()), err)
+
+    def test_node_scoped_query_on_empty_graph_exits_two(self) -> None:
+        # The guard fires before the dm-BU3 unknown-node path: a 0-node
+        # graph is a wrong-root symptom, not "node unknown" (exit 5).
+        code, stdout, _ = _run(
+            ["query", "--root", str(self.root), "blast-radius", "--node", "reality"]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+
+    def test_layer_dirs_without_manifests_also_guarded(self) -> None:
+        # Layer dirs exist but zero manifests -> still an empty graph.
+        root = _mkroot()
+        code, stdout, err = _run(["query", "--root", str(root), "stats"])
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("empty graph", err)
+
+    def test_non_empty_graph_is_unaffected(self) -> None:
+        code, _, _ = _run(
+            ["query", "--root", str(_chain_root()), "hub-degree"]
+        )
+        self.assertEqual(code, 0)
+
+
 class TestQueryDeterminismAndShape(unittest.TestCase):
     def test_envelope_keys_are_sorted_and_complete(self) -> None:
         root = _chain_root()

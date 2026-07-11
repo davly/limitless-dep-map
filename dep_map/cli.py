@@ -47,6 +47,10 @@ Exit codes for ``query``:
 * 0 — query answered, JSON written to stdout.
 * 1 — invalid arguments (bad ``--root``; ``--node`` required-but-missing
   or supplied-but-rejected).
+* 2 — query walked but produced an empty graph (root path likely
+  wrong). No envelope is written; mirrors ``render``'s empty-graph
+  refusal so an existing-but-wrong ``--root`` cannot read as a clean
+  empty answer.
 * 4 — query could not be answered (``topo`` on a cyclic graph).
 * 5 — node-scoped query against an unknown node (the envelope is still
   written with ``"known": false``; the non-zero exit prevents a typo'd
@@ -223,7 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument(
         "--node",
         default=None,
-        help="Node name for node-scoped queries (e.g. foundation/reality).",
+        help="Node name for node-scoped queries (e.g. reality).",
     )
     return parser
 
@@ -300,6 +304,12 @@ def _run_query(args: argparse.Namespace) -> int:
     * 0 — query answered, JSON envelope written to stdout.
     * 1 — invalid arguments (bad ``--root``; ``--node`` required-but-
       missing or supplied-but-rejected for the chosen query).
+    * 2 — the walk produced an empty graph (existing directory, but not
+      a monorepo root — or one with no cohort manifest edges). No
+      envelope is written: every query over an empty graph would emit a
+      clean-looking empty result (``hub-degree []``, ``topo []``, ...),
+      indistinguishable from a healthy scan, so we refuse — the same
+      guard (and exit code) ``render`` applies before writing an SVG.
     * 4 — query could not be answered: ``topo`` on a cyclic graph
       (use ``has-cycle`` to detect first).
     * 5 — node-scoped query against an unknown node. The envelope is
@@ -327,6 +337,21 @@ def _run_query(args: argparse.Namespace) -> int:
 
     scanner = Scanner(root=root)
     graph = Graph.from_scanner(scanner)
+
+    # Empty-graph guard (mirrors render's, same exit code): an
+    # existing-but-wrong --root (e.g. a subdirectory that contains none
+    # of the layer dirs) walks zero manifests and yields a 0-node graph.
+    # Every query over it would print a clean-looking empty result —
+    # "no hubs anywhere" — so refuse loudly instead, naming the root.
+    if graph.edge_count() == 0:
+        print(
+            f"dep-map: empty graph (root={root} yielded no cohort "
+            "manifest edges - is it the monorepo root?). Refusing to "
+            "answer: every query over an empty graph reads as a clean "
+            "empty result.",
+            file=sys.stderr,
+        )
+        return 2
 
     # dm-BU3 honesty: a node-scoped query against a node that is not in
     # the graph would otherwise return an empty result with exit 0 —
