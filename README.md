@@ -14,7 +14,10 @@ dependency graph.
   consume the cohort hubs" at a glance.
 - **Layer leakage** — flagships reaching across the layer boundary.
 - **Hub degree** — degree-centrality of `limitless-py` / `limitless-rs`
-  / `foundation/reality` etc. so cohort migrations land planned.
+  / `reality` etc. so cohort migrations land planned. Hub names are the
+  scanner-emitted producer spellings (the Go repo tail: `reality`, not
+  `foundation/reality`); any node with ≥ 3 consumers is also reported
+  as an emergent hub even if the curated list omits it.
 
 ## Install / Run
 
@@ -63,7 +66,7 @@ result collections in a stable order):
 ```json
 {
   "known": true,
-  "node": "foundation/reality",
+  "node": "reality",
   "query": "blast-radius",
   "result": ["casino", "ledger", "report"],
   "schema_version": 1
@@ -87,7 +90,7 @@ Query kinds:
 | `producers`    | node (`--node`) | direct producers, name-sorted |
 | `has-cycle`    | graph           | `bool` |
 | `topo`         | graph           | nodes in topological order |
-| `hub-degree`   | graph           | `[name, degree]` pairs, descending degree then name |
+| `hub-degree`   | graph           | `[name, degree]` pairs, descending degree then name (curated `HUB_NAMES` + any emergent hub with ≥ 3 consumers) |
 | `graph`        | graph           | `{edges, nodes}` — the whole DAG |
 | `edges`        | graph           | every edge `{consumer, kind, producer}`, sorted |
 | `nodes`        | graph           | every node `{kind, name}` with its layer, sorted |
@@ -99,6 +102,7 @@ Query kinds:
 |---|---|
 | 0  | query answered, JSON envelope written to stdout |
 | 1  | invalid arguments (bad `--root`; `--node` required-but-missing or supplied-but-rejected) |
+| 2  | empty graph — the walk found no cohort manifest edges (existing-but-wrong `--root`); no envelope written, mirroring `render`'s empty-graph refusal |
 | 4  | query could not be answered (`topo` on a cyclic graph — use `has-cycle` first) |
 | 5  | node-scoped query against an unknown node (envelope still written with `"known": false`; non-zero exit stops a typo reading as "no dependents") |
 
@@ -151,11 +155,12 @@ Each SVG carries:
 PYTHONPATH=. python -m unittest discover -s tests -v
 ```
 
-188 tests covering scanner per-substrate, graph adjacency + filters +
-exports, renderer determinism (incl. cross-process) + Mirror-Mark
-round-trip + R166 footer, the CLI parser, both sub-commands end-to-end
-(render exit codes 0-3; query envelope, kinds, exit codes 0/1/4/5,
-`schema_version`), and `--version`.
+204 tests covering scanner per-substrate, graph adjacency + filters +
+exports, hub-name spelling contract + emergent-hub safeguard, renderer
+determinism (incl. cross-process) + Mirror-Mark round-trip + R166
+footer, the CLI parser, both sub-commands end-to-end (render exit codes
+0-3; query envelope, kinds, exit codes 0/1/2/4/5, `schema_version`),
+and `--version`.
 
 ## Cohort cross-references
 
